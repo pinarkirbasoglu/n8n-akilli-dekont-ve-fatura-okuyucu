@@ -1,0 +1,229 @@
+{
+  "name": "Akilli_Dekont_ve_Fatura_Okuyucu_Public",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Akıllı Dekont ve Fatura Okuyucu",
+        "formDescription": "Lütfen işlemek istediğiniz banka dekontu veya fatura görselini yükleyin.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Belge",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".jpg, .jpeg, .png, .webp",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        -304,
+        0
+      ],
+      "id": "form-trigger-node",
+      "name": "On form submission",
+      "webhookId": "YOUR_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "text": "=Bu banka dekontu veya fatura görselini dikkatlice analiz et. Hiçbir açıklama, yorum veya ek metin yazma; yalnızca aşağıdaki 8 anahtara sahip geçerli bir JSON nesnesi döndür:\n\n{\n  \"Tarih\": \"Belge üzerindeki işlem tarihini YYYY-AA-GG formatında yaz. Yoksa null yaz.\",\n  \"Belge_Turu\": \"Banka Dekontu, Fatura veya Alışveriş Fişi olarak sınıflandır.\",\n  \"Gonderici\": \"Ödemeyi gönderen kişi veya kurumun adı soyadı / unvanı. Belgede yazmıyorsa null yaz.\",\n  \"Gonderici_IBAN\": \"Göndericiye ait IBAN numarası (TR ile başlayan). Belgede yoksa veya maskeli ise gördüğün halini yaz, hiç yoksa null yaz.\",\n  \"Alici\": \"Ödemeyi alan kişi, kurum veya işletmenin adı soyadı / unvanı.\",\n  \"Alici_IBAN\": \"Alıcıya ait IBAN numarası (TR ile başlayan). Belgede yoksa null yaz.\",\n  \"Tutar\": \"İşlem tutarını sadece ondalıklı sayı formatında yaz (binlik noktası kullanma, ondalık için nokta kullan, örn: 1250.50).\",\n  \"Para_Birimi\": \"Para birimi kodunu yaz (TRY, USD, EUR).\"\n}",
+        "inputType": "binary",
+        "binaryPropertyName": "Belge",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        -96,
+        0
+      ],
+      "id": "gemini-analyze-image-node",
+      "name": "Analyze an image",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_GOOGLE_GEMINI_CREDENTIAL_ID",
+          "name": "Google Gemini API Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiYaniti = $input.first().json;\n\n// Gemini çıktısındaki metni güvenli şekilde alıyoruz\nlet hamMetin = \"\";\nif (aiYaniti.content && aiYaniti.content.parts && aiYaniti.content.parts[0]) {\n  hamMetin = aiYaniti.content.parts[0].text;\n} else if (aiYaniti.text) {\n  hamMetin = aiYaniti.text;\n} else {\n  throw new Error(\"Yapay zeka yanıtından metin alınamadı.\");\n}\n\n// Olası markdown bloklarını (```json ... ```) temizliyoruz\nconst temizMetin = hamMetin.replace(/```json/gi, \"\").replace(/```/g, \"\").trim();\n\n// Metni gerçek JSON nesnesine dönüştürüyoruz\nlet veri;\ntry {\n  veri = JSON.parse(temizMetin);\n} catch (err) {\n  throw new Error(\"JSON ayrıştırma hatası: \" + temizMetin);\n}\n\n// Tutarı sayısal (Float) değere çeviriyoruz\nconst sayisalTutar = parseFloat(String(veri.Tutar || \"0\").replace(/[^0-9.-]+/g, \"\"));\n\n// Google Sheets sütun başlıklarıyla birebir eşleşen temiz veri nesnesi\nreturn [\n  {\n    json: {\n      Tarih: veri.Tarih || new Date().toISOString().split(\"T\")[0],\n      Belge_Turu: veri.Belge_Turu || \"Dekont/Fatura\",\n      Gonderici: veri.Gonderici || \"Belirtilmemiş\",\n      Gonderici_IBAN: veri.Gonderici_IBAN ? String(veri.Gonderici_IBAN).replace(/\\s+/g, \"\") : \"Belirtilmemiş\",\n      Alici: veri.Alici || \"Belirtilmemiş\",\n      Alici_IBAN: veri.Alici_IBAN ? String(veri.Alici_IBAN).replace(/\\s+/g, \"\") : \"Belirtilmemiş\",\n      Tutar: isNaN(sayisalTutar) ? 0 : sayisalTutar,\n      Para_Birimi: (veri.Para_Birimi || \"TRY\").toUpperCase()\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        0
+      ],
+      "id": "code-json-parser-node",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Dekont_ve_Fatura_Kayitlari"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Tarih",
+              "displayName": "Tarih",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Belge_Turu",
+              "displayName": "Belge_Turu",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Gonderici",
+              "displayName": "Gonderici",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Gonderici_IBAN",
+              "displayName": "Gonderici_IBAN",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Alici",
+              "displayName": "Alici",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Alici_IBAN",
+              "displayName": "Alici_IBAN",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tutar",
+              "displayName": "Tutar",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Para_Birimi",
+              "displayName": "Para_Birimi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        320,
+        0
+      ],
+      "id": "google-sheets-append-node",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets Account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Analyze an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze an image": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
